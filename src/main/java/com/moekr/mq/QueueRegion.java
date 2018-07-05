@@ -99,11 +99,11 @@ class QueueRegion extends QueueStore {
         byte[] continuousHead = null;
         for (Block block : blockList) {
             if (num == 0) break;
-            if (offset <= block.messageAmount) {
+            if (offset < block.messageAmount) {
                 buffer = fetchBuffer(block, READ_ONLY);
                 buffer.position((block.index % BLOCK_PER_BUFFER) * BLOCK_SIZE);
                 buffer.get(blockBuffer, 0, BLOCK_SIZE);
-                long skip = (block.continuous ? 1 : 0) + offset;
+                long skip = ((block.continuous && continuousHead == null) ? 1 : 0) + offset;
                 int previous = -1;
                 for (int slotIndex = 0; slotIndex < SLOT_PER_BLOCK; slotIndex++) {
                     int slotEnd = (slotIndex + 1) * SLOT_SIZE - 1;
