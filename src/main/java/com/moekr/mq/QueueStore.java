@@ -1,14 +1,20 @@
 package com.moekr.mq;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.Collection;
 
+import static com.moekr.mq.Constants.DATA_DIR;
 import static com.moekr.mq.Constants.FILE_AMOUNT;
 
 public class QueueStore extends io.openmessaging.QueueStore {
     private final QueueRegion[] regions = new QueueRegion[FILE_AMOUNT];
 
     public QueueStore() throws IOException {
+        File dir = new File(DATA_DIR);
+        if (!((dir.exists() && dir.isDirectory()) || dir.mkdirs())) {
+            throw new IOException("Fail to create data dir!");
+        }
         for (int index = 0; index < FILE_AMOUNT; index++) {
             regions[index] = new QueueRegion(index);
         }
