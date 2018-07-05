@@ -1,30 +1,28 @@
 package com.moekr.mq;
 
-import java.util.ArrayList;
+import java.io.IOException;
 import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
-@SuppressWarnings("SynchronizationOnLocalVariableOrMethodParameter")
+import static com.moekr.mq.Constants.FILE_AMOUNT;
+
 public class QueueStore extends io.openmessaging.QueueStore {
-    private static Collection<byte[]> EMPTY = new ArrayList<>();
+    private final QueueRegion[] regions = new QueueRegion[FILE_AMOUNT];
 
-    private final Map<String, List<byte[]>> queueMap = new ConcurrentHashMap<>();
-
-    public void put(String queueName, byte[] message) {
-        List<byte[]> queue = queueMap.computeIfAbsent(queueName, s -> new ArrayList<>());
-        synchronized (queue) {
-            queue.add(message);
+    public QueueStore() throws IOException {
+        for (int index = 0; index < FILE_AMOUNT; index++) {
+            regions[index] = new QueueRegion(index);
         }
     }
+
+    @Override
+    public void put(String queueName, byte[] message) {
+        int index = Math.abs(queueName.hashCode()) % FILE_AMOUNT;
+        regions[index].put(queueName, message);
+    }
+
+    @Override
     public Collection<byte[]> get(String queueName, long offset, long num) {
-        if (!queueMap.containsKey(queueName)) {
-            return EMPTY;
-        }
-        List<byte[]> queue = queueMap.get(queueName);
-        synchronized (queue) {
-            return queue.subList((int) offset, offset + num > queue.size() ? queue.size() : (int) (offset + num));
-        }
+        int index = Math.abs(queueName.hashCode()) % FILE_AMOUNT;
+        return regions[index].get(queueName, offset, num);
     }
 }

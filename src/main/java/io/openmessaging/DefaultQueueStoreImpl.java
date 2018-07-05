@@ -1,11 +1,12 @@
 package io.openmessaging;
 
+import java.io.IOException;
 import java.util.Collection;
 
 public class DefaultQueueStoreImpl extends QueueStore {
     private final com.moekr.mq.QueueStore store;
 
-    public DefaultQueueStoreImpl() {
+    public DefaultQueueStoreImpl() throws IOException {
         this.store = new com.moekr.mq.QueueStore();
     }
 
