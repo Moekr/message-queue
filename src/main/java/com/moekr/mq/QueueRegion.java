@@ -37,7 +37,7 @@ class QueueRegion extends QueueStore {
                     .getKey();
             bufferMap.remove(removeIndex);
         }
-        MappedByteBuffer byteBuffer = channel.map(mode, bufferIndex * BUFFER_SIZE, BUFFER_SIZE);
+        MappedByteBuffer byteBuffer = channel.map(mode, (long) bufferIndex * BUFFER_SIZE, BUFFER_SIZE);
         buffer = new Buffer(mode, byteBuffer);
         bufferMap.put(bufferIndex, buffer);
         return buffer.buffer;
