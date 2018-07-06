@@ -35,10 +35,7 @@ class QueueRegion extends QueueStore {
                     .reduce((a, b) -> a.getValue().lastUsedAt > b.getValue().lastUsedAt ? b : a)
                     .orElseThrow(IllegalStateException::new)
                     .getKey();
-            buffer = bufferMap.remove(removeIndex);
-            if (buffer.mode == READ_WRITE) {
-                buffer.buffer.force();
-            }
+            bufferMap.remove(removeIndex);
         }
         MappedByteBuffer byteBuffer = channel.map(mode, bufferIndex * BUFFER_SIZE, BUFFER_SIZE);
         buffer = new Buffer(mode, byteBuffer);
