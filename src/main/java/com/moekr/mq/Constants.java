@@ -9,4 +9,5 @@ abstract class Constants {
     static final int BLOCK_PER_BUFFER = 4096;
     static final int BUFFER_SIZE = BLOCK_SIZE * BLOCK_PER_BUFFER;
     static final int MAX_LOADED_BUFFER = 8;
+    static final int LENGTH_SIZE = 4;
 }

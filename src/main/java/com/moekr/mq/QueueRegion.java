@@ -16,7 +16,7 @@ import static java.nio.channels.FileChannel.MapMode.READ_WRITE;
 class QueueRegion extends QueueStore {
     private final FileChannel channel;
     private final Map<Integer, Buffer> bufferMap;
-    private final Map<String, List<Block>> queueMap;
+    private final Map<String, Queue> queueMap;
 
     QueueRegion(int index) throws IOException {
         channel = new RandomAccessFile(DATA_DIR + index, "rw").getChannel();
@@ -56,28 +56,36 @@ class QueueRegion extends QueueStore {
     }
 
     private void put0(String queueName, byte[] message) throws IOException {
-        List<Block> blockList = queueMap.computeIfAbsent(queueName, s -> new ArrayList<>());
+        Queue queue = queueMap.computeIfAbsent(queueName, s -> new Queue());
+        queue.messageAmount++;
+
+        List<Block> blockList = queue.blockList;
         if (blockList.isEmpty()) blockList.add(new Block());
+
         Block block = blockList.get(blockList.size() - 1);
-        MappedByteBuffer buffer = fetchBuffer(block, READ_WRITE);
-        buffer.position((block.index % BLOCK_PER_BUFFER) * BLOCK_SIZE + block.usedSlot * SLOT_SIZE);
-        int left = SLOT_PER_BLOCK - block.usedSlot;
-        if (left * SLOT_SIZE > message.length) {
-            buffer.put(message);
-            block.messageAmount++;
-            block.usedSlot += message.length / SLOT_SIZE + 1;
-            if (block.usedSlot == SLOT_PER_BLOCK) blockList.add(new Block());
-        } else {
-            buffer.put(message, 0, left * SLOT_SIZE);
-            block.messageAmount++;
-            block.usedSlot = SLOT_PER_BLOCK;
-            block = new Block();
-            blockList.add(block);
-            buffer = fetchBuffer(block, READ_WRITE);
-            buffer.position((block.index % BLOCK_PER_BUFFER) * BLOCK_SIZE);
-            buffer.put(message, left * SLOT_SIZE, message.length - left * SLOT_SIZE);
-            block.continuous = true;
-            block.usedSlot = (message.length - left * SLOT_SIZE) / SLOT_SIZE + 1;
+        block.messageAmount++;
+
+        int messageBegin = 0;
+
+        while (messageBegin < message.length) {
+            MappedByteBuffer buffer = fetchBuffer(block, READ_WRITE);
+            buffer.position((block.index % BLOCK_PER_BUFFER) * BLOCK_SIZE + block.usedSlot * SLOT_SIZE);
+            buffer.putInt(message.length - messageBegin);
+            int leftLength = (SLOT_PER_BLOCK - block.usedSlot) * SLOT_SIZE - LENGTH_SIZE;
+            int messageLength = message.length - messageBegin;
+            if (leftLength > messageLength) {
+                buffer.put(message, messageBegin, messageLength);
+                block.usedSlot += messageLength / SLOT_SIZE + 1;
+            } else {
+                buffer.put(message, 0, leftLength);
+                block.usedSlot = SLOT_PER_BLOCK;
+            }
+            if (messageBegin != 0) block.continuous = true;
+            messageBegin = messageBegin + leftLength;
+            if (block.usedSlot == SLOT_PER_BLOCK) {
+                block = new Block();
+                blockList.add(block);
+            }
         }
     }
 
@@ -91,58 +99,90 @@ class QueueRegion extends QueueStore {
     }
 
     private Collection<byte[]> get0(String queueName, long offset, long num) throws IOException {
-        List<Block> blockList = queueMap.get(queueName);
-        if (blockList == null) return Collections.emptyList();
+        Queue queue = queueMap.get(queueName);
+        if (queue == null || offset > queue.messageAmount) return Collections.emptyList();
+        if (offset + num > queue.messageAmount) num = queue.messageAmount - offset;
+
         MappedByteBuffer buffer;
         byte[] blockBuffer = new byte[BLOCK_SIZE];
         List<byte[]> result = new ArrayList<>();
         byte[] continuousHead = null;
+
+        List<Block> blockList = queue.blockList;
         for (Block block : blockList) {
-            if (num == 0) break;
+            if (result.size() == num) return result;
             if (offset < block.messageAmount) {
+                // 读取Block
                 buffer = fetchBuffer(block, READ_ONLY);
                 buffer.position((block.index % BLOCK_PER_BUFFER) * BLOCK_SIZE);
                 buffer.get(blockBuffer, 0, BLOCK_SIZE);
+                // 计算要跳过的消息数
                 long skip = ((block.continuous && continuousHead == null) ? 1 : 0) + offset;
-                int previous = -1;
-                for (int slotIndex = 0; slotIndex < SLOT_PER_BLOCK; slotIndex++) {
-                    int slotEnd = (slotIndex + 1) * SLOT_SIZE - 1;
-                    if (blockBuffer[slotEnd] == 0) {
-                        if (skip > 0) {
-                            skip--;
-                        } else if (num > 0) {
-                            int messageBegin = (previous + 1) * SLOT_SIZE;
-                            if (blockBuffer[messageBegin] == 0) return result;
-                            int messageEnd = slotEnd;
-                            while (blockBuffer[messageEnd] == 0) {
-                                messageEnd--;
-                            }
-                            byte[] message = Arrays.copyOfRange(blockBuffer, messageBegin, messageEnd + 1);
-                            if (continuousHead != null) {
-                                byte[] temp = new byte[continuousHead.length + message.length];
-                                System.arraycopy(continuousHead, 0, temp, 0, continuousHead.length);
-                                System.arraycopy(message, 0, temp, continuousHead.length, message.length);
-                                result.add(temp);
-                                continuousHead = null;
-                            } else {
-                                result.add(message);
-                            }
-                            num--;
-                        } else {
-                            break;
-                        }
-                        previous = slotIndex;
-                    }
-                }
-                if (num > 0 && previous != SLOT_PER_BLOCK - 1) {
-                    continuousHead = Arrays.copyOfRange(blockBuffer, (previous + 1) * SLOT_SIZE, BLOCK_SIZE);
-                }
+                // 清空偏移量，避免对后续造成影响
                 offset = 0;
+                // 检查每个Slot
+                int slotIndex = 0;
+                while (slotIndex < SLOT_PER_BLOCK) {
+                    if (result.size() == num) return result;
+                    // 计算消息起始位置
+                    int slotBegin = slotIndex * SLOT_SIZE;
+                    int length = 0;
+                    for (int index = 0; index < LENGTH_SIZE; index++) {
+                        length += (blockBuffer[slotBegin + (LENGTH_SIZE - index - 1)] & 0xFF) << (index * 8);
+                    }
+                    int messageBegin = slotBegin + LENGTH_SIZE;
+                    int messageEnd = messageBegin + length;
+
+                    if (skip > 0) {
+                        // 需要跳过该条消息
+                        skip--;
+                    } else if (messageEnd < BLOCK_SIZE) {
+                        // 消息在当前Block中结束
+                        byte[] message;
+                        if (continuousHead == null) {
+                            // 消息在当前Block中开始
+                            message = Arrays.copyOfRange(blockBuffer, messageBegin, messageEnd);
+                        } else {
+                            // 消息在之前的Block中开始
+                            message = new byte[continuousHead.length + length];
+                            System.arraycopy(continuousHead, 0, message, 0, continuousHead.length);
+                            System.arraycopy(blockBuffer, messageBegin, message, continuousHead.length, length);
+                            continuousHead = null;
+                        }
+                        result.add(message);
+                    } else {
+                        // 消息在之后的Block中结束，读取完该条消息后直接结束当前Block
+                        if (continuousHead == null) {
+                            // 消息在当前的Block中开始
+                            continuousHead = Arrays.copyOfRange(blockBuffer, messageBegin, BLOCK_SIZE);
+                        } else {
+                            // 消息在之前的Block中开始
+                            byte[] newContinuousHead = new byte[continuousHead.length + (BLOCK_SIZE - messageBegin)];
+                            System.arraycopy(continuousHead, 0, newContinuousHead, 0, continuousHead.length);
+                            System.arraycopy(blockBuffer, messageBegin, newContinuousHead, continuousHead.length, BLOCK_SIZE - messageBegin);
+                            continuousHead = newContinuousHead;
+                        }
+                        break;
+                    }
+                    // 除非消息在之后的Block中结束，否则设置下一个Slot的序号
+                    slotIndex = messageEnd / SLOT_SIZE + 1;
+                }
             } else {
+                // 跳过该Block并修改消息偏移量
                 offset -= block.messageAmount;
             }
         }
         return result;
+    }
+
+    private class Queue {
+        final List<Block> blockList;
+
+        int messageAmount = 0;
+
+        Queue() {
+            this.blockList = new ArrayList<>();
+        }
     }
 
     private int blockIndex = 0;
