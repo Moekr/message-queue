@@ -14,11 +14,13 @@ import static java.nio.channels.FileChannel.MapMode.READ_ONLY;
 import static java.nio.channels.FileChannel.MapMode.READ_WRITE;
 
 class QueueRegion extends QueueStore {
+    private final int index;
     private final FileChannel channel;
     private final Map<Integer, Buffer> bufferMap;
     private final Map<String, Queue> queueMap;
 
     QueueRegion(int index) throws IOException {
+        this.index = index;
         channel = new RandomAccessFile(DATA_DIR + index, "rw").getChannel();
         bufferMap = new HashMap<>();
         queueMap = new HashMap<>();
@@ -35,7 +37,9 @@ class QueueRegion extends QueueStore {
                     .reduce((a, b) -> a.getValue().lastUsedAt > b.getValue().lastUsedAt ? b : a)
                     .orElseThrow(IllegalStateException::new)
                     .getKey();
-            ToolKit.unmap(bufferMap.remove(removeIndex).buffer);
+            Buffer removeBuffer = bufferMap.remove(removeIndex);
+            ToolKit.unmap(removeBuffer.buffer);
+            //System.out.println("Region[" + index + "] unmap buffer[" + removeIndex + "] with mode " + removeBuffer.mode);
         }
         MappedByteBuffer byteBuffer = channel.map(mode, (long) bufferIndex * BUFFER_SIZE, BUFFER_SIZE);
         buffer = new Buffer(mode, byteBuffer);

@@ -6,7 +6,6 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.MappedByteBuffer;
 
-@SuppressWarnings("JavaReflectionMemberAccess")
 abstract class ToolKit {
     private static final Method UNMAP_METHOD;
 
