@@ -22,8 +22,8 @@ class QueueRegion extends QueueStore {
     QueueRegion(int index) throws IOException {
         this.index = index;
         channel = new RandomAccessFile(DATA_DIR + index, "rw").getChannel();
-        bufferMap = new HashMap<>();
-        queueMap = new HashMap<>();
+        bufferMap = new HashMap<>(MAX_LOADED_BUFFER);
+        queueMap = new HashMap<>(INITIAL_QUEUE_MAP_SIZE);
     }
 
     private MappedByteBuffer fetchBuffer(Block block, MapMode mode) throws IOException {
@@ -39,7 +39,7 @@ class QueueRegion extends QueueStore {
                     .getKey();
             Buffer removeBuffer = bufferMap.remove(removeIndex);
             ToolKit.unmap(removeBuffer.buffer);
-            //System.out.println("Region[" + index + "] unmap buffer[" + removeIndex + "] with mode " + removeBuffer.mode);
+            System.out.println("Region[" + index + "] unmap buffer[" + removeIndex + "] with mode " + removeBuffer.mode);
         }
         MappedByteBuffer byteBuffer = channel.map(mode, (long) bufferIndex * BUFFER_SIZE, BUFFER_SIZE);
         buffer = new Buffer(mode, byteBuffer);
@@ -182,7 +182,7 @@ class QueueRegion extends QueueStore {
         int messageAmount = 0;
 
         Queue() {
-            this.blockList = new ArrayList<>();
+            this.blockList = new ArrayList<>(INITIAL_BLOCK_LIST_SIZE);
         }
     }
 
