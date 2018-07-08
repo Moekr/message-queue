@@ -39,7 +39,7 @@ class QueueRegion extends QueueStore {
                     .getKey();
             Buffer removeBuffer = bufferMap.remove(removeIndex);
             ToolKit.unmap(removeBuffer.buffer);
-            System.out.println("Region[" + index + "] unmap buffer[" + removeIndex + "] with mode " + removeBuffer.mode);
+            // System.out.println("Region[" + index + "] unmap buffer[" + removeIndex + "] with mode " + removeBuffer.mode);
         }
         MappedByteBuffer byteBuffer = channel.map(mode, (long) bufferIndex * BUFFER_SIZE, BUFFER_SIZE);
         buffer = new Buffer(mode, byteBuffer);
