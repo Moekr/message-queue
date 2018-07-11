@@ -22,22 +22,21 @@ class QueueRegion extends QueueStore {
     QueueRegion(int index) throws IOException {
         this.index = index;
         channel = new RandomAccessFile(DATA_DIR + index, "rw").getChannel();
-        bufferMap = new HashMap<>(MAX_LOADED_BUFFER);
-        queueMap = new HashMap<>(INITIAL_QUEUE_MAP_SIZE);
+        bufferMap = new LinkedHashMap<>(MAX_LOADED_BUFFER, 1.0F, true);
+        queueMap = new HashMap<>(INITIAL_QUEUE_MAP_SIZE, 1.0F);
     }
 
     private MappedByteBuffer fetchBuffer(Block block, MapMode mode) throws IOException {
         int bufferIndex = block.index / BLOCK_PER_BUFFER;
         Buffer buffer = bufferMap.get(bufferIndex);
         if (buffer != null && (mode == READ_ONLY || mode == buffer.mode)) {
-            return buffer.touch().buffer;
+            return buffer.buffer;
         }
-        while (bufferMap.size() >= MAX_LOADED_BUFFER) {
-            int removeIndex = bufferMap.entrySet().stream()
-                    .reduce((a, b) -> a.getValue().lastUsedAt > b.getValue().lastUsedAt ? b : a)
-                    .orElseThrow(IllegalStateException::new)
-                    .getKey();
-            Buffer removeBuffer = bufferMap.remove(removeIndex);
+        Set<Map.Entry<Integer, Buffer>> entries = bufferMap.entrySet();
+        Iterator<Map.Entry<Integer, Buffer>> iterator = entries.iterator();
+        while (bufferMap.size() >= MAX_LOADED_BUFFER && iterator.hasNext()) {
+            Buffer removeBuffer = iterator.next().getValue();
+            iterator.remove();
             ToolKit.unmap(removeBuffer.buffer);
             // System.out.println("Region[" + index + "] unmap buffer[" + removeIndex + "] with mode " + removeBuffer.mode);
         }
@@ -70,22 +69,23 @@ class QueueRegion extends QueueStore {
 
         while (messageBegin < message.length) {
             MappedByteBuffer buffer = fetchBuffer(block, READ_WRITE);
-            buffer.position((block.index % BLOCK_PER_BUFFER) * BLOCK_SIZE + block.usedSlot * SLOT_SIZE);
+            buffer.position((block.index % BLOCK_PER_BUFFER) * BLOCK_SIZE + queue.usedSlot * SLOT_SIZE);
             buffer.putInt(message.length - messageBegin);
-            int leftLength = (SLOT_PER_BLOCK - block.usedSlot) * SLOT_SIZE - LENGTH_SIZE;
+            int leftLength = (SLOT_PER_BLOCK - queue.usedSlot) * SLOT_SIZE - LENGTH_SIZE;
             int messageLength = message.length - messageBegin;
             if (leftLength > messageLength) {
                 buffer.put(message, messageBegin, messageLength);
-                block.usedSlot += messageLength / SLOT_SIZE + 1;
+                queue.usedSlot += messageLength / SLOT_SIZE + 1;
             } else {
                 buffer.put(message, 0, leftLength);
-                block.usedSlot = SLOT_PER_BLOCK;
+                queue.usedSlot = SLOT_PER_BLOCK;
             }
             if (messageBegin != 0) block.continuous = true;
             messageBegin = messageBegin + leftLength;
-            if (block.usedSlot == SLOT_PER_BLOCK) {
+            if (queue.usedSlot == SLOT_PER_BLOCK) {
                 block = new Block();
                 blockList.add(block);
+                queue.usedSlot = 0;
             }
         }
     }
@@ -180,6 +180,7 @@ class QueueRegion extends QueueStore {
         final List<Block> blockList;
 
         int messageAmount = 0;
+        int usedSlot = 0;
 
         Queue() {
             this.blockList = new ArrayList<>(INITIAL_BLOCK_LIST_SIZE);
@@ -193,7 +194,6 @@ class QueueRegion extends QueueStore {
 
         int messageAmount = 0;
         boolean continuous = false;
-        int usedSlot = 0;
 
         Block() {
             this.index = blockIndex++;
@@ -204,17 +204,9 @@ class QueueRegion extends QueueStore {
         final MapMode mode;
         final MappedByteBuffer buffer;
 
-        long lastUsedAt;
-
         Buffer(MapMode mode, MappedByteBuffer buffer) {
             this.mode = mode;
             this.buffer = buffer;
-            touch();
-        }
-
-        Buffer touch() {
-            lastUsedAt = System.currentTimeMillis();
-            return this;
         }
     }
 
