@@ -17,6 +17,7 @@ class QueueRegion extends QueueStore {
     private final int index;
     private final FileChannel channel;
     private final Map<Integer, Buffer> bufferMap;
+    private final byte[] blockBuffer = new byte[BLOCK_SIZE];
     private final Map<String, Queue> queueMap;
 
     QueueRegion(int index) throws IOException {
@@ -68,11 +69,11 @@ class QueueRegion extends QueueStore {
         int messageBegin = 0;
 
         while (messageBegin < message.length) {
+            int messageLength = message.length - messageBegin;
             MappedByteBuffer buffer = fetchBuffer(block, READ_WRITE);
             buffer.position((block.index % BLOCK_PER_BUFFER) * BLOCK_SIZE + queue.usedSlot * SLOT_SIZE);
-            buffer.putInt(message.length - messageBegin);
+            buffer.putInt(messageLength);
             int leftLength = (SLOT_PER_BLOCK - queue.usedSlot) * SLOT_SIZE - LENGTH_SIZE;
-            int messageLength = message.length - messageBegin;
             if (leftLength > messageLength) {
                 buffer.put(message, messageBegin, messageLength);
                 queue.usedSlot += messageLength / SLOT_SIZE + 1;
@@ -105,8 +106,7 @@ class QueueRegion extends QueueStore {
         if (offset + num > queue.messageAmount) num = queue.messageAmount - offset;
 
         MappedByteBuffer buffer;
-        byte[] blockBuffer = new byte[BLOCK_SIZE];
-        List<byte[]> result = new ArrayList<>();
+        List<byte[]> result = new ArrayList<>((int) num);
         byte[] continuousHead = null;
 
         List<Block> blockList = queue.blockList;
